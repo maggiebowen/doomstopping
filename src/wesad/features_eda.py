@@ -55,20 +55,57 @@ def extract_eda_features(eda_signal, sampling_rate=700):
             scr_amplitudes = eda_decomposed['EDA_Phasic'].iloc[scr_peaks].values
             scr_amplitude_mean = np.mean(scr_amplitudes)
             scr_amplitude_max = np.max(scr_amplitudes)
+            scr_amplitude_var = np.var(scr_amplitudes)
         else:
             scr_amplitude_mean = 0.0
             scr_amplitude_max = 0.0
+            scr_amplitude_var = 0.0
+            
+        # Extract SCR Inter-Event Interval (IEI) features
+        if scr_peaks_count > 1:
+            # Convert peak indices to seconds
+            peak_times = scr_peaks / sampling_rate
+            iei = np.diff(peak_times)
+            scr_iei_mean = np.mean(iei)
+            scr_iei_var = np.var(iei)
+        elif scr_peaks_count == 1:
+            # Only one peak, undefined interval - treat as window length or 0? 
+            # Prompt says: if len(iei)>0 else window_length_seconds for mean
+            # But we don't strictly have window length here passed in explicitly, 
+            # can estimate from signal length.
+            window_length_sec = len(eda_signal) / sampling_rate
+            scr_iei_mean = window_length_sec
+            scr_iei_var = 0.0
+        else:
+            # No peaks
+            window_length_sec = len(eda_signal) / sampling_rate
+            scr_iei_mean = window_length_sec
+            scr_iei_var = 0.0
         
         # Extract tonic and phasic statistics
         tonic = eda_decomposed['EDA_Tonic'].values
         phasic = eda_decomposed['EDA_Phasic'].values
         
+        # Tonic slope
+        # Create time array in seconds
+        t_seconds = np.arange(len(tonic)) / sampling_rate
+        try:
+            # Fit 1D line: slope = polyfit(t_seconds, tonic, 1)[0]
+            tonic_slope = np.polyfit(t_seconds, tonic, 1)[0]
+        except Exception:
+            tonic_slope = 0.0
+        
         return {
             'scr_peaks_count': scr_peaks_count,
             'scr_amplitude_mean': scr_amplitude_mean,
             'scr_amplitude_max': scr_amplitude_max,
+            'scr_amplitude_var': scr_amplitude_var,
+            'scr_iei_mean': scr_iei_mean,
+            'scr_iei_var': scr_iei_var,
             'tonic_mean': np.mean(tonic),
             'tonic_std': np.std(tonic),
+            'tonic_var': np.var(tonic),
+            'tonic_slope': tonic_slope,
             'phasic_mean': np.mean(phasic),
             'phasic_std': np.std(phasic),
             'eda_mean': np.mean(eda_cleaned),
@@ -83,8 +120,13 @@ def extract_eda_features(eda_signal, sampling_rate=700):
             'scr_peaks_count': np.nan,
             'scr_amplitude_mean': np.nan,
             'scr_amplitude_max': np.nan,
+            'scr_amplitude_var': np.nan,
+            'scr_iei_mean': np.nan,
+            'scr_iei_var': np.nan,
             'tonic_mean': np.nan,
             'tonic_std': np.nan,
+            'tonic_var': np.nan,
+            'tonic_slope': np.nan,
             'phasic_mean': np.nan,
             'phasic_std': np.nan,
             'eda_mean': np.nan,

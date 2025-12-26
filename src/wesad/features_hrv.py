@@ -6,6 +6,7 @@ Window-based feature extraction from ECG signals.
 import numpy as np
 import neurokit2 as nk
 import pandas as pd
+from scipy import stats
 
 
 def extract_hrv_features(ecg_signal, sampling_rate=700):
@@ -59,7 +60,64 @@ def extract_hrv_features(ecg_signal, sampling_rate=700):
         
         # Compute mean heart rate from RR intervals
         rr_intervals = np.diff(rpeaks) / sampling_rate * 1000  # Convert to ms
-        hr_mean = 60000 / np.mean(rr_intervals) if len(rr_intervals) > 0 else np.nan
+        
+        if len(rr_intervals) > 1:
+            hr_mean = 60000 / np.mean(rr_intervals)
+            
+            # IBI CV (Coefficient of Variation)
+            ibi_mean = np.mean(rr_intervals)
+            ibi_std = np.std(rr_intervals)
+            ibi_cv = ibi_std / ibi_mean if ibi_mean > 1e-6 else 0.0
+            
+            # HR Slope
+            # Instantaneous HR at each beat
+            inst_hr = 60000 / rr_intervals
+            # Times of beats (using the second peak of each pair for timestamp)
+            beat_times = rpeaks[1:] / sampling_rate
+            try:
+                hr_slope = np.polyfit(beat_times, inst_hr, 1)[0]
+            except Exception:
+                hr_slope = 0.0
+                
+            # IBI Entropy
+            # Histogram with 10 bins
+            try:
+                counts, _ = np.histogram(rr_intervals, bins=10)
+                # Compute entropy
+                ibi_entropy = stats.entropy(counts)
+            except Exception:
+                ibi_entropy = 0.0
+                
+            # RMSSD Subwindow Variance
+            # Split signal into 3 subwindows and compute RMSSD for each
+            num_subwindows = 3
+            subwin_len = len(ecg_cleaned) // num_subwindows
+            subwin_rmssds = []
+            
+            for i in range(num_subwindows):
+                start_idx = i * subwin_len
+                end_idx = start_idx + subwin_len
+                sub_signal = ecg_cleaned[start_idx:end_idx]
+                
+                # We need peaks in this subwindow to compute RMSSD
+                # We can filter the existing peaks or re-find them. Re-finding might be cleaner 
+                # but slower. Let's filter existing peaks.
+                sub_peaks = rpeaks[(rpeaks >= start_idx) & (rpeaks < end_idx)]
+                if len(sub_peaks) > 1:
+                    sub_rr = np.diff(sub_peaks) / sampling_rate * 1000
+                    subwin_rmssds.append(compute_rmssd(sub_rr))
+            
+            if len(subwin_rmssds) >= 2:
+                rmssd_subwin_var = np.var(subwin_rmssds)
+            else:
+                rmssd_subwin_var = 0.0
+                
+        else:
+            hr_mean = np.nan
+            ibi_cv = 0.0
+            hr_slope = 0.0
+            ibi_entropy = 0.0
+            rmssd_subwin_var = 0.0
         
         # Flatten outputs into single dict
         features = {
@@ -69,8 +127,12 @@ def extract_hrv_features(ecg_signal, sampling_rate=700):
             'hrv_rmssd': hrv_time['HRV_RMSSD'].values[0] if 'HRV_RMSSD' in hrv_time else np.nan,
             'hrv_pnn50': hrv_time['HRV_pNN50'].values[0] if 'HRV_pNN50' in hrv_time else np.nan,
             
-            # Heart rate
+            # Heart rate and Regularity
             'hr_mean': hr_mean,
+            'hr_slope': hr_slope,
+            'ibi_cv': ibi_cv,
+            'rmssd_subwin_var': rmssd_subwin_var,
+            'ibi_entropy': ibi_entropy,
         }
         
         # Add frequency-domain if available
@@ -102,6 +164,10 @@ def _nan_hrv_features():
         'hrv_rmssd': np.nan,
         'hrv_pnn50': np.nan,
         'hr_mean': np.nan,
+        'hr_slope': np.nan,
+        'ibi_cv': np.nan,
+        'rmssd_subwin_var': np.nan,
+        'ibi_entropy': np.nan,
         'hrv_lf': np.nan,
         'hrv_hf': np.nan,
         'hrv_lf_hf_ratio': np.nan,

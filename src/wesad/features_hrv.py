@@ -1,34 +1,110 @@
 """
-Heart Rate Variability (HRV) feature extraction.
+Heart Rate Variability (HRV) feature extraction for stress detection.
+
+Window-based feature extraction from ECG signals.
 """
 import numpy as np
 import neurokit2 as nk
+import pandas as pd
 
 
 def extract_hrv_features(ecg_signal, sampling_rate=700):
     """
-    Extract HRV features from ECG signal.
+    Extract HRV features from ECG signal window for stress detection.
+    
+    Designed for window-based analysis (e.g., 60-second windows).
+    Extracts time-domain and frequency-domain HRV metrics.
     
     Args:
-        ecg_signal: Raw ECG signal array
-        sampling_rate: Sampling rate in Hz (WESAD chest ECG is 700Hz)
+        ecg_signal: Raw ECG signal array (1D, typically 42000 samples for 60s @ 700Hz)
+        sampling_rate: Sampling rate in Hz (default: 700 for WESAD chest ECG)
         
     Returns:
-        Dictionary of HRV features (time-domain, frequency-domain)
+        Dictionary of flattened HRV features:
+          Time-domain:
+            - hrv_mean_rr: Mean RR interval (ms)
+            - hrv_sdnn: Standard deviation of RR intervals
+            - hrv_rmssd: Root mean square of successive differences
+            - hrv_pnn50: Percentage of successive RR intervals differing by >50ms
+          Frequency-domain:
+            - hrv_lf: Low frequency power (0.04-0.15 Hz)
+            - hrv_hf: High frequency power (0.15-0.4 Hz)
+            - hrv_lf_hf_ratio: LF/HF ratio
+          Additional:
+            - hr_mean: Mean heart rate (bpm)
     """
-    # Clean ECG signal
-    ecg_cleaned = nk.ecg_clean(ecg_signal, sampling_rate=sampling_rate)
+    try:
+        # Clean ECG signal
+        ecg_cleaned = nk.ecg_clean(ecg_signal, sampling_rate=sampling_rate)
+        
+        # Find R-peaks
+        _, rpeaks_dict = nk.ecg_peaks(ecg_cleaned, sampling_rate=sampling_rate)
+        
+        # Check if we have enough peaks for HRV analysis
+        # Need at least 5 R-peaks for meaningful HRV
+        rpeaks = rpeaks_dict['ECG_R_Peaks']
+        if len(rpeaks) < 5:
+            # Not enough peaks - return NaN features
+            return _nan_hrv_features()
+        
+        # Extract time-domain HRV features
+        hrv_time = nk.hrv_time(rpeaks, sampling_rate=sampling_rate, show=False)
+        
+        # Extract frequency-domain HRV features
+        # This requires longer windows (>60s ideal), so may fail on shorter windows
+        try:
+            hrv_freq = nk.hrv_frequency(rpeaks, sampling_rate=sampling_rate, show=False)
+        except Exception:
+            hrv_freq = None
+        
+        # Compute mean heart rate from RR intervals
+        rr_intervals = np.diff(rpeaks) / sampling_rate * 1000  # Convert to ms
+        hr_mean = 60000 / np.mean(rr_intervals) if len(rr_intervals) > 0 else np.nan
+        
+        # Flatten outputs into single dict
+        features = {
+            # Time-domain
+            'hrv_mean_rr': hrv_time['HRV_MeanNN'].values[0] if 'HRV_MeanNN' in hrv_time else np.nan,
+            'hrv_sdnn': hrv_time['HRV_SDNN'].values[0] if 'HRV_SDNN' in hrv_time else np.nan,
+            'hrv_rmssd': hrv_time['HRV_RMSSD'].values[0] if 'HRV_RMSSD' in hrv_time else np.nan,
+            'hrv_pnn50': hrv_time['HRV_pNN50'].values[0] if 'HRV_pNN50' in hrv_time else np.nan,
+            
+            # Heart rate
+            'hr_mean': hr_mean,
+        }
+        
+        # Add frequency-domain if available
+        if hrv_freq is not None:
+            features.update({
+                'hrv_lf': hrv_freq['HRV_LF'].values[0] if 'HRV_LF' in hrv_freq else np.nan,
+                'hrv_hf': hrv_freq['HRV_HF'].values[0] if 'HRV_HF' in hrv_freq else np.nan,
+                'hrv_lf_hf_ratio': hrv_freq['HRV_LFHF'].values[0] if 'HRV_LFHF' in hrv_freq else np.nan,
+            })
+        else:
+            features.update({
+                'hrv_lf': np.nan,
+                'hrv_hf': np.nan,
+                'hrv_lf_hf_ratio': np.nan,
+            })
+        
+        return features
     
-    # Find R-peaks
-    _, rpeaks = nk.ecg_peaks(ecg_cleaned, sampling_rate=sampling_rate)
-    
-    # Extract HRV features
-    hrv_time = nk.hrv_time(rpeaks, sampling_rate=sampling_rate)
-    hrv_freq = nk.hrv_frequency(rpeaks, sampling_rate=sampling_rate)
-    
+    except Exception as e:
+        # Return NaN features if extraction fails
+        return _nan_hrv_features()
+
+
+def _nan_hrv_features():
+    """Helper to return NaN-filled HRV feature dict when extraction fails."""
     return {
-        'time_domain': hrv_time,
-        'frequency_domain': hrv_freq
+        'hrv_mean_rr': np.nan,
+        'hrv_sdnn': np.nan,
+        'hrv_rmssd': np.nan,
+        'hrv_pnn50': np.nan,
+        'hr_mean': np.nan,
+        'hrv_lf': np.nan,
+        'hrv_hf': np.nan,
+        'hrv_lf_hf_ratio': np.nan,
     }
 
 

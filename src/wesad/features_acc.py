@@ -11,6 +11,11 @@ def extract_acc_features(acc_signal, sampling_rate=700, rolling_window_sec=1.0, 
     """
     Extract ACC features from a signal window.
     
+    Robustness:
+    - Returns 'valid_acc' flag (True/False).
+    - Hard failures (input NaNs, exceptions) -> valid=False, all 0.0.
+    - No NaNs returned in features.
+    
     Args:
         acc_signal: ACC signal array (N samples x 3 axes)
         sampling_rate: Sampling rate in Hz
@@ -18,62 +23,63 @@ def extract_acc_features(acc_signal, sampling_rate=700, rolling_window_sec=1.0, 
         stillness_threshold: Variance threshold for stillness detection
         
     Returns:
-        Dictionary of ACC features:
-          - acc_mag_mean: Mean magnitude
-          - acc_mag_var: Variance of magnitude
-          - still_ratio: Fraction of window spent in 'stillness'
+        Dictionary of ACC features + 'valid_acc' flag.
     """
+    # Default numeric failure features
+    features = {
+        'acc_mag_mean': 0.0,
+        'acc_mag_var': 0.0,
+        'still_ratio': 0.0,
+        'valid_acc': False
+    }
+
     try:
-        # Ensure signal is numpy array
+        # Input Validation
         acc_signal = np.array(acc_signal)
         
+        # Hard Check: input NaNs
+        if np.isnan(acc_signal).any():
+            return features
+        
         # Calculate magnitude: sqrt(x^2 + y^2 + z^2)
-        # Assuming input shape is (N, 3) or similar
         if acc_signal.ndim == 2 and acc_signal.shape[1] == 3:
             acc_mag = np.sqrt(np.sum(acc_signal**2, axis=1))
         elif acc_signal.ndim == 1:
-            # Fallback if only magnitude is passed
-            acc_mag = acc_signal
+            acc_mag = acc_signal # Already magnitude?
         else:
-            # If shape is (3, N) transpose or handle
             if acc_signal.shape[0] == 3:
                  acc_mag = np.sqrt(np.sum(acc_signal.T**2, axis=1))
             else:
-                 raise ValueError("Invalid ACC signal shape")
+                 return features # Hard fail on shape
 
-        # Mean and Variance of magnitude
+        # Mean and Variance
         acc_mag_mean = np.mean(acc_mag)
         acc_mag_var = np.var(acc_mag)
         
         # Stillness Ratio
-        # Rolling variance of magnitude
+        # Rolling variance
         window_samples = int(rolling_window_sec * sampling_rate)
-        if window_samples < 1:
-            window_samples = 1
+        if window_samples < 1: window_samples = 1
             
-        # Use pandas for efficient rolling calculation
         mag_series = pd.Series(acc_mag)
         rolling_var = mag_series.rolling(window=window_samples).var()
         
-        # Fraction where rolling var < threshold
-        # nan values from start of rolling window are ignored (or counted as not still)
-        # We drop NaNs to compute ratio over valid computed windows
+        # Drop NaNs from the start of rolling window so we only count valid computed stats
         valid_rolling_var = rolling_var.dropna()
+        
         if len(valid_rolling_var) > 0:
             still_count = np.sum(valid_rolling_var < stillness_threshold)
             still_ratio = still_count / len(valid_rolling_var)
         else:
             still_ratio = 0.0
             
-        return {
-            'acc_mag_mean': acc_mag_mean,
-            'acc_mag_var': acc_mag_var,
-            'still_ratio': still_ratio
-        }
+        features.update({
+            'acc_mag_mean': float(acc_mag_mean),
+            'acc_mag_var': float(acc_mag_var),
+            'still_ratio': float(still_ratio),
+            'valid_acc': True
+        })
+        return features
 
-    except Exception as e:
-        return {
-            'acc_mag_mean': np.nan,
-            'acc_mag_var': np.nan,
-            'still_ratio': np.nan
-        }
+    except Exception:
+        return features

@@ -4,18 +4,26 @@ from deepface import DeepFace
 from collections import deque
 import logging
 import time
+import sys
+
+# Robust Scoring Logic
+import distress_score
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger("EmotionDetector")
 
 # Constants
-FRAME_SKIP = 10        # Analyze emotion every N frames
-WINDOW_SIZE = 30      # Rolling window size for smoothing (approx 2-3s)
-DISTRESS_THRESH = 50.0 # Just for visual coloring (optional)
+ANALYSIS_INTERVAL = 1.0  # Analyze emotion every 1.0 seconds
+WINDOW_SIZE = 5          # Rolling window size (5 samples @ 1s = 5s history)
+CALIBRATION_SECONDS = 12.0
+MIN_BASELINE_SAMPLES = 5 
 
-# Distress is sum of these negative emotions
-DISTRESS_EMOTIONS = ['sad', 'angry', 'fear', 'disgust']
+def get_centered_coords(text, font, scale, thickness, img_width, img_height):
+    text_size = cv2.getTextSize(text, font, scale, thickness)[0]
+    text_x = (img_width - text_size[0]) // 2
+    text_y = (img_height + text_size[1]) // 2
+    return text_x, text_y
 
 def run_realtime_emotion():
     """
@@ -29,14 +37,23 @@ def run_realtime_emotion():
 
     logger.info("Webcam opened. Press 'q' to quit.")
 
+    # Get frame dimensions for centering
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
     # 2. State Variables
-    frame_count = 0
     scores_deque = deque(maxlen=WINDOW_SIZE)
+    last_analysis_time = 0
+    
+    # Baseline State
+    baseline_start_time = time.time()
+    baseline_samples = []
+    baseline_mean = None # None = Calibrating, Float = Running
     
     # Defaults for display
-    current_distress = 0.0
+    smoothed_score = 0.0 # Raw Smoothed (0-1)
+    final_score = 0.0    # Baseline Corrected (0-1)
     current_dominant = "Neutral"
-    current_emotions = {}
 
     while True:
         ret, frame = cap.read()
@@ -46,57 +63,114 @@ def run_realtime_emotion():
         
         # Flip for mirror effect
         frame = cv2.flip(frame, 1)
+        current_time = time.time()
 
-        # 3. DeepFace Analysis (Every N frames)
-        if frame_count % FRAME_SKIP == 0:
+        # 3. DeepFace Analysis (Time-Based)
+        if (current_time - last_analysis_time) >= ANALYSIS_INTERVAL:
+            last_analysis_time = current_time
             try:
                 # analyze() returns a list of result dicts (one per face)
                 results = DeepFace.analyze(
                     img_path=frame, 
                     actions=['emotion'], 
                     enforce_detection=False,
-                    silent=True # Suppress frequent logging
+                    silent=True
                 )
 
                 if results:
                     # Take the largest face (width * height)
                     face = max(results, key=lambda x: x['region']['w'] * x['region']['h'])
-                    
-                    # Extract Data
-                    current_emotions = face['emotion']
+                    emotions = face['emotion']
                     current_dominant = face['dominant_emotion']
                     
-                    # Calculate Distress Score
-                    # Sum percentages of negative emotions
-                    raw_score = sum(current_emotions.get(e, 0.0) for e in DISTRESS_EMOTIONS)
+                    # --- SCORING LOGIC ---
                     
-                    # Update History
-                    scores_deque.append(raw_score)
+                    # 1. Compute Raw Weighted Sum (Direct Percentage)
+                    raw_sum = distress_score.calculate_weighted_distress(emotions)
                     
-                    # Update Smoothed Score
-                    current_distress = np.mean(scores_deque)
+                    # 2. Smooth (Rolling Window)
+                    scores_deque.append(raw_sum)
+                    smoothed_score = np.mean(scores_deque)
+                    
+                    # 3. Calibration / Baseline Logic
+                    
+                    if baseline_mean is None:
+                        # CALIBRATION PHASE
+                        baseline_samples.append(smoothed_score)
+                        
+                        elapsed = current_time - baseline_start_time
+                        remaining = max(0, CALIBRATION_SECONDS - elapsed)
+                        
+                        if elapsed >= CALIBRATION_SECONDS and len(baseline_samples) >= MIN_BASELINE_SAMPLES:
+                            baseline_mean = np.mean(baseline_samples)
+                            logger.info(f"BASELINE LOCKED: {baseline_mean*100:.1f}%")
+                        
+                        # Output Status (Scrolling Print)
+                        print(f"CALIBRATING | {remaining:.1f}s left | smooth={smoothed_score*100:.1f}% | dominant={current_dominant}")
+                        final_score = 0.0
+                        
+                    else:
+                        # RUNNING PHASE
+                        final_score = distress_score.apply_baseline_correction(smoothed_score, baseline_mean)
+                        print(f"RUNNING | smooth={smoothed_score*100:.1f}% | final={final_score*100:.1f}% | baseline={baseline_mean*100:.1f}% | dominant={current_dominant}")
             
             except Exception as e:
-                # If analysis fails (e.g. face detection error inside DeepFace), just log and skip update
-                # This keeps the last known valid state on screen 
-                # logger.debug(f"Analysis failed: {e}")
+                # logger.error(f"Error: {e}")
                 pass
 
         # 4. Draw Overlay
-        # Setup Text
-        text_color = (0, 255, 0) # Green by default
-        if current_distress > 50:
-            text_color = (0, 0, 255) # Red if high distress
         
-        # Status Bar Background
-        cv2.rectangle(frame, (0, 0), (400, 120), (50, 50, 50), -1)
-        
-        # Display Text
-        cv2.putText(frame, f"Distress Score: {current_distress:.1f}%", (20, 40), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, text_color, 2)
-        
-        cv2.putText(frame, f"Dominant: {current_dominant}", (20, 80), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        if baseline_mean is None:
+            # --- CALIBRATION SCREEN ---
+            # Darken background
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (width, height), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+            
+            # Countdown
+            elapsed = time.time() - baseline_start_time
+            remaining = max(0, CALIBRATION_SECONDS - elapsed)
+            
+            # Centered Text 1: Title
+            title = "CALIBRATION MODE"
+            tx, ty = get_centered_coords(title, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3, width, height)
+            cv2.putText(frame, title, (tx, ty - 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+
+            # Centered Text 2: Instruction
+            instr = "Keep a Neutral Expression"
+            tx, ty = get_centered_coords(instr, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2, width, height)
+            cv2.putText(frame, instr, (tx, ty - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            
+            # Centered Text 3: Countdown
+            count_text = f"{remaining:.1f}s"
+            tx, ty = get_centered_coords(count_text, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 5, width, height)
+            cv2.putText(frame, count_text, (tx, ty + 80), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 255, 0), 5)
+            
+        else:
+            # --- RUNNING SCREEN ---
+            
+            # Status Bar Background
+            cv2.rectangle(frame, (0, 0), (450, 140), (40, 40, 40), -1)
+            
+            # Phase
+            cv2.putText(frame, "MONITORING ACTIVE", (20, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Final Score Logic for Colors
+            # Score is 0.0 - 1.0
+            score_pct = final_score * 100
+            score_color = (0, 255, 0) # Green (< 50)
+            if score_pct > 75: 
+                score_color = (0, 0, 255) # Red
+            elif score_pct > 50:
+                score_color = (0, 255, 255) # Yellow
+                
+            cv2.putText(frame, f"Distress: {score_pct:.1f}%", (20, 80), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, score_color, 3)
+            
+            # Dominant Emotion
+            cv2.putText(frame, f"Dominant: {current_dominant}", (20, 120), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
         
         # Display Webcam View
         cv2.imshow('Real-Time Emotion', frame)
@@ -104,8 +178,6 @@ def run_realtime_emotion():
         # 5. Quit Check
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-        
-        frame_count += 1
 
     # Cleanup
     cap.release()

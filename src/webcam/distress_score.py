@@ -1,74 +1,79 @@
-"""
-Distress score computation from facial analysis.
-"""
-from deepface import DeepFace
 import numpy as np
 
+# --- Constants ---
 
-def analyze_emotion(frame):
+# Emotion Categories
+DISTRESS_EMOTIONS = ["sad", "angry", "fear", "disgust"]
+NEUTRAL_EMOTIONS = ["neutral", "happy"]
+
+# Weights: Reflect severity/arousal of distress
+EMOTION_WEIGHTS = {
+    "sad": 1.0,      # Simplifed weights to keep it "true to percentages"
+    "angry": 1.0,
+    "fear": 1.0,
+    "disgust": 1.0,
+    "neutral": 0.0,
+    "happy": 0.0
+}
+
+EPSILON = 1e-6
+
+def normalize_emotions(emotions):
     """
-    Analyze emotions from face in frame using DeepFace.
-    
-    Args:
-        frame: Image frame (BGR format from OpenCV)
+    Ensure all emotion values are in [0, 1].
+    DeepFace sometimes returns percentages (0-100).
+    """
+    normalized = {}
+    for emo, val in emotions.items():
+        if val > 1.5:
+            normalized[emo] = float(val) / 100.0
+        else:
+            normalized[emo] = float(val)
         
-    Returns:
-        Dictionary with emotion probabilities
-    """
-    try:
-        result = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
-        return result[0]['emotion'] if isinstance(result, list) else result['emotion']
-    except Exception as e:
-        print(f"Error analyzing emotion: {e}")
-        return None
+        normalized[emo] = np.clip(normalized[emo], 0.0, 1.0)
+    return normalized
 
-
-def compute_distress_score(emotion_dict):
+def calculate_weighted_distress(emotions):
     """
-    Compute overall distress score from emotion probabilities.
+    Compute Raw Distress Sum:
+    Score = Sum(Weight * Value) for Distress Emotions
     
-    Args:
-        emotion_dict: Dictionary with emotion probabilities from DeepFace
+    This provides a direct reflection of the 'percentage' of distress detected.
+    """
+    # 1. Normalize inputs
+    norm_emotions = normalize_emotions(emotions)
+    
+    # 2. Compute Mass
+    mass_distress = 0.0
+    for emo in DISTRESS_EMOTIONS:
+        val = norm_emotions.get(emo, 0.0)
+        weight = EMOTION_WEIGHTS.get(emo, 1.0)
+        mass_distress += (val * weight)
         
-    Returns:
-        Distress score (0-100, higher = more distress)
-    """
-    if emotion_dict is None:
-        return 0
-    
-    # Weight negative emotions higher
-    distress_weights = {
-        'angry': 1.0,
-        'fear': 1.0,
-        'sad': 0.8,
-        'disgust': 0.7,
-        'neutral': 0.0,
-        'happy': -0.5,
-        'surprise': 0.3
-    }
-    
-    score = 0
-    for emotion, prob in emotion_dict.items():
-        weight = distress_weights.get(emotion, 0)
-        score += prob * weight
-    
-    # Normalize to 0-100 range
-    return max(0, min(100, score))
+    return np.clip(mass_distress, 0.0, 1.0)
 
-
-def get_stress_level(distress_score):
+def apply_baseline_correction(current_score, baseline_mean):
     """
-    Categorize distress score into stress levels.
+    Rescale the score based on the user's calibration baseline.
     
-    Args:
-        distress_score: Distress score (0-100)
+    Revised Strategy: Simple Subtraction with Scaling
+    This is more sensitive than the previous ratio.
+    """
+    if baseline_mean is None:
+        return 0.0 # Not calibrated yet
         
-    Returns:
-        String: 'low', 'medium', or 'high'
-    """
-    if distress_score < 30:
-        return 'low'
-    elif distress_score < 60:
-        return 'medium'
-    else:
-        return 'high'
+    # Subtract baseline
+    corrected = current_score - baseline_mean
+    
+    # If below baseline, it's 0
+    if corrected < 0:
+        return 0.0
+        
+    # Scaling: Map the remaining range [0, 1-baseline] to [0, 1]
+    # Denominator
+    denom = 1.0 - baseline_mean
+    if denom < 0.05: denom = 0.05 # Prevent divide by zero/noise
+        
+    final_score = corrected / denom
+    
+    return np.clip(final_score, 0.0, 1.0)

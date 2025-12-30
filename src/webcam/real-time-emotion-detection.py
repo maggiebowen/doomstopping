@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', date
 logger = logging.getLogger("EmotionDetector")
 
 # Constants
-ANALYSIS_INTERVAL = 1.0  # Analyze emotion every 1.0 seconds
-WINDOW_SIZE = 5          # Rolling window size (5 samples @ 1s = 5s history)
+ANALYSIS_INTERVAL = 0.2  # Analyze emotion every 0.2 seconds (5 FPS)
+WINDOW_SIZE = 10         # Rolling window size (10 samples @ 0.2s = 2s history)
 CALIBRATION_SECONDS = 12.0
 MIN_BASELINE_SAMPLES = 5 
 
@@ -54,6 +54,11 @@ def run_realtime_emotion():
     smoothed_score = 0.0 # Raw Smoothed (0-1)
     final_score = 0.0    # Baseline Corrected (0-1)
     current_dominant = "Neutral"
+    current_emotions = {} # Store raw emotion dict
+    raw_sum = 0.0        # Current frame raw score
+    raw_sum = 0.0        # Current frame raw score
+    distress_z = 0.0     # Z-score for triggers
+    baseline_std = 1.0   # Default to 1.0 to avoid divide-by-zero
 
     while True:
         ret, frame = cap.read()
@@ -81,6 +86,7 @@ def run_realtime_emotion():
                     # Take the largest face (width * height)
                     face = max(results, key=lambda x: x['region']['w'] * x['region']['h'])
                     emotions = face['emotion']
+                    current_emotions = emotions # Save for display
                     current_dominant = face['dominant_emotion']
                     
                     # --- SCORING LOGIC ---
@@ -103,7 +109,9 @@ def run_realtime_emotion():
                         
                         if elapsed >= CALIBRATION_SECONDS and len(baseline_samples) >= MIN_BASELINE_SAMPLES:
                             baseline_mean = np.mean(baseline_samples)
-                            logger.info(f"BASELINE LOCKED: {baseline_mean*100:.1f}%")
+                            baseline_std = np.std(baseline_samples)
+                            if baseline_std < 0.01: baseline_std = 0.01 # Prevent zero std
+                            logger.info(f"BASELINE LOCKED: Mean={baseline_mean*100:.1f}%, Std={baseline_std:.4f}")
                         
                         # Output Status (Scrolling Print)
                         print(f"CALIBRATING | {remaining:.1f}s left | smooth={smoothed_score*100:.1f}% | dominant={current_dominant}")
@@ -112,7 +120,13 @@ def run_realtime_emotion():
                     else:
                         # RUNNING PHASE
                         final_score = distress_score.apply_baseline_correction(smoothed_score, baseline_mean)
-                        print(f"RUNNING | smooth={smoothed_score*100:.1f}% | final={final_score*100:.1f}% | baseline={baseline_mean*100:.1f}% | dominant={current_dominant}")
+                        
+                        # Calculate Z-Score
+                        distress_z = (smoothed_score - baseline_mean) / baseline_std
+                        
+                        # Explicitly show the math for the user
+                        # Format: Raw (Current Frame) | Smooth (Window) | Final (Corrected)
+                        print(f"Raw: {raw_sum:.3f} | Smooth: {smoothed_score:.3f} | Final: {final_score:.3f} | Dominant: {current_dominant}")
             
             except Exception as e:
                 # logger.error(f"Error: {e}")
@@ -149,8 +163,8 @@ def run_realtime_emotion():
         else:
             # --- RUNNING SCREEN ---
             
-            # Status Bar Background
-            cv2.rectangle(frame, (0, 0), (450, 140), (40, 40, 40), -1)
+            # Status Bar Background (Expanded for bars)
+            cv2.rectangle(frame, (0, 0), (450, 400), (40, 40, 40), -1)
             
             # Phase
             cv2.putText(frame, "MONITORING ACTIVE", (20, 30), 
@@ -171,6 +185,39 @@ def run_realtime_emotion():
             # Dominant Emotion
             cv2.putText(frame, f"Dominant: {current_dominant}", (20, 120), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 1)
+
+            # Draw Raw Emotion Bars
+            # Sort order: Non-Distress first, then Distress
+            display_order = ["neutral", "happy", "sad", "angry", "fear", "disgust", "surprise"]
+            bar_y = 160
+            
+            for emo in display_order:
+                # Get value (0-100 or 0-1 depending on DeepFace, normalize just in case)
+                val = current_emotions.get(emo, 0.0)
+                # DeepFace usually gives 0-100 percentages. If small, assume it's 0-1 and scale.
+                # However, our distress_score helper assumes checks. 
+                # For display, we want pure 0-100.
+                if val <= 1.0 and val > 0.001: 
+                    # If it looks normalized, scale up
+                    val *= 100
+                
+                # Bar Logic
+                bar_width = int(val * 2.5) # Scale 100% -> 250px
+                bar_color = (200, 200, 200) # Gray
+                
+                if emo in ["sad", "angry", "fear", "disgust"]:
+                    bar_color = (0, 100, 255) # Orange/Red
+                
+                # Label
+                cv2.putText(frame, f"{emo.capitalize()}: {val:.1f}%", (20, bar_y), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                # Bar Fill
+                cv2.rectangle(frame, (120, bar_y - 10), (120 + bar_width, bar_y), bar_color, -1)
+                # Bar Outline
+                cv2.rectangle(frame, (120, bar_y - 10), (120 + 250, bar_y), (100, 100, 100), 1)
+                
+                bar_y += 30
         
         # Display Webcam View
         cv2.imshow('Real-Time Emotion', frame)

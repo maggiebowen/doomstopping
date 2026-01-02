@@ -1,30 +1,30 @@
 import numpy as np
 
 # --- Constants ---
-
-# Emotion Categories
 # Emotion Categories
 DISTRESS_EMOTIONS = ["sad", "angry", "fear", "disgust"]
-NON_DISTRESS_EMOTIONS = ["neutral", "happy"]
+NON_DISTRESS_EMOTIONS = ["neutral", "happy", "surprise"]
 
 # Weights: Reflect severity/arousal of distress
 EMOTION_WEIGHTS = {
     # Distress
-    "sad": 0.9,      # Lower weight to dampen "resting sad face" noise (low arousal)
+    "sad": 1.1,
     "angry": 1.1,
-    "fear": 1.2,     # Higher weight for high-arousal/urgency signals
-    "disgust": 1.1,
+    "fear": 1.2,     # Higher weight for high-arousal/urgency signals 
+    "disgust": 1.2,
     # Non-Distress
     "neutral": 1.0,  # Standard anchor
-    "happy": 1.0
+    "happy": 1.0,
+    "surprise": 1.0
 }
 
+# prevent division by zero
 EPSILON = 1e-6
 
-def normalize_emotions(emotions):
+def normalize_emotions(emotions) -> dict:
     """
     Ensure all emotion values are in [0, 1].
-    DeepFace sometimes returns percentages (0-100).
+    DeepFace sometimes returns percentages (0-100)? --> maybe not necessary, but just to standardize
     """
     normalized = {}
     for emo, val in emotions.items():
@@ -36,7 +36,7 @@ def normalize_emotions(emotions):
         normalized[emo] = np.clip(normalized[emo], 0.0, 1.0)
     return normalized
 
-def calculate_weighted_distress(emotions):
+def calculate_weighted_distress(emotions) -> float:
     """
     Compute Raw Distress Ratio:
     S_D = Sum(Weight * Value) for Distress Emotions
@@ -67,7 +67,7 @@ def calculate_weighted_distress(emotions):
         
     return np.clip(raw_score, 0.0, 1.0)
 
-def apply_baseline_correction(current_score, baseline_mean):
+def apply_baseline_correction(current_score, baseline_mean) -> float:
     """
     Rescale the score based on the user's calibration baseline.
     

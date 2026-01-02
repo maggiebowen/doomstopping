@@ -126,7 +126,12 @@ def run_realtime_emotion():
                         
                         # Explicitly show the math for the user
                         # Format: Raw (Current Frame) | Smooth (Window) | Final (Corrected)
-                        print(f"Raw: {raw_sum:.3f} | Smooth: {smoothed_score:.3f} | Final: {final_score:.3f} | Dominant: {current_dominant}")
+                        print(
+                            f"Raw: {raw_sum*100:.1f}% | "
+                            f"Smooth: {smoothed_score*100:.1f}% | "
+                            f"Final: {final_score*100:.1f}% | "
+                            f"Dominant: {current_dominant}"
+                        )
             
             except Exception as e:
                 # logger.error(f"Error: {e}")

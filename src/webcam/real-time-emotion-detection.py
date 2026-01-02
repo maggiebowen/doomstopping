@@ -19,6 +19,15 @@ WINDOW_SIZE = 10         # Rolling window size (10 samples @ 0.2s = 2s history)
 CALIBRATION_SECONDS = 12.0
 MIN_BASELINE_SAMPLES = 5 
 
+# --- Distress State Machine Config ---
+DISTRESS_ENTER_THRESHOLD = 0.70
+DISTRESS_EXIT_THRESHOLD  = 0.50
+
+ACCUM_REQUIRED_SECONDS   = 5.0
+EXIT_HOLD_SECONDS        = 5.0
+RESET_COOLDOWN_SECONDS   = 120.0 # 2 Minutes of "safety" required to reset the accumulator
+DT_MAX_SECONDS           = 1.0  # safety clamp 
+
 def get_centered_coords(text, font, scale, thickness, img_width, img_height):
     text_size = cv2.getTextSize(text, font, scale, thickness)[0]
     text_x = (img_width - text_size[0]) // 2
@@ -59,6 +68,13 @@ def run_realtime_emotion():
     raw_sum = 0.0        # Current frame raw score
     distress_z = 0.0     # Z-score for triggers
     baseline_std = 1.0   # Default to 1.0 to avoid divide-by-zero
+
+    # --- State Machine Variables ---
+    state = "VIEWING"          # "VIEWING" or "INTERVENTION"
+    accum_above = 0.0          # seconds accumulated above enter threshold
+    last_update_time = None    # last timestamp when final_score was updated
+    below_since = None         # timestamp when final_score dropped below exit threshold
+    last_distress_time = time.time() # Last time we saw a distress spike (for cooldown reset)
 
     while True:
         ret, frame = cap.read()
@@ -117,20 +133,79 @@ def run_realtime_emotion():
                         print(f"CALIBRATING | {remaining:.1f}s left | smooth={smoothed_score*100:.1f}% | dominant={current_dominant}")
                         final_score = 0.0
                         
+                        # FORCE RESET STATE during calibration
+                        state = "VIEWING"
+                        accum_above = 0.0
+                        below_since = None
+                        last_update_time = None
+                        last_distress_time = time.time()
+                        
                     else:
                         # RUNNING PHASE
                         final_score = distress_score.apply_baseline_correction(smoothed_score, baseline_mean)
                         
                         # Calculate Z-Score
                         distress_z = (smoothed_score - baseline_mean) / baseline_std
+
+                        # --- STATE MACHINE UPDATE ---
+                        now = time.time()
+
+                        # Step 4.1: Compute safe dt
+                        if last_update_time is None:
+                            last_update_time = now
+                            dt = 0.0
+                        else:
+                            dt = now - last_update_time
+                            last_update_time = now
                         
-                        # Explicitly show the math for the user
-                        # Format: Raw (Current Frame) | Smooth (Window) | Final (Corrected)
+                        # Clamp dt
+                        dt = max(0.0, min(dt, DT_MAX_SECONDS))
+
+                        # Step 4.3: State Logic (Mode C: Decay)
+                        event = None
+
+                        if state == "VIEWING":
+                            if final_score >= DISTRESS_ENTER_THRESHOLD:
+                                # 1. Distress Detected: Accumulate Time
+                                accum_above += dt
+                                last_distress_time = now # Mark the time of this spike
+                            else:
+                                # 2. No Distress (Safe): 
+                                # Do NOT decay. Just hold the value.
+                                # ONLY reset if we have been safe for a long time (RESET_COOLDOWN_SECONDS).
+                                
+                                time_since_last_distress = now - last_distress_time
+                                if time_since_last_distress > RESET_COOLDOWN_SECONDS:
+                                    accum_above = 0.0
+                                    # print(f"COOLDOWN REACHED ({RESET_COOLDOWN_SECONDS}s) - Accumulator Reset")
+
+                            if accum_above >= ACCUM_REQUIRED_SECONDS:
+                                state = "INTERVENTION"
+                                event = "ENTER_INTERVENTION"
+                                below_since = None
+
+                        elif state == "INTERVENTION":
+                            if final_score <= DISTRESS_EXIT_THRESHOLD:
+                                if below_since is None:
+                                    below_since = now
+                                elif (now - below_since) >= EXIT_HOLD_SECONDS:
+                                    state = "VIEWING"
+                                    event = "EXIT_INTERVENTION"
+                                    accum_above = 0.0
+                                    below_since = None
+                            else:
+                                below_since = None
+                        
+                        # Step 5: Terminal Output
+                        # Step 5: Terminal Output
+                        # Combined for maximum visibility
                         print(
                             f"Raw: {raw_sum*100:.1f}% | "
                             f"Smooth: {smoothed_score*100:.1f}% | "
                             f"Final: {final_score*100:.1f}% | "
-                            f"Dominant: {current_dominant}"
+                            f"STATE={state} | "
+                            f"Accum={accum_above:.1f}s | "
+                            f"dt={dt:.2f}s"
                         )
             
             except Exception as e:
@@ -168,13 +243,34 @@ def run_realtime_emotion():
         else:
             # --- RUNNING SCREEN ---
             
-            # Status Bar Background (Expanded for bars)
-            cv2.rectangle(frame, (0, 0), (450, 400), (40, 40, 40), -1)
+            # Status Bar Background (Expanded for debug info)
+            cv2.rectangle(frame, (0, 0), (450, 460), (40, 40, 40), -1)
             
             # Phase
             cv2.putText(frame, "MONITORING ACTIVE", (20, 30), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            # --- PART 6: OVerlay Debug (MOVED TO BOTTOM) ---
+            # State
+            cv2.putText(frame, f"State: {state}", (20, 400), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             
+            # Accumulator
+            cv2.putText(frame, f"Accum: {accum_above:.1f}s / {ACCUM_REQUIRED_SECONDS:.1f}s", (20, 430), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+
+            # --- INTERVENTION OVERLAY ---
+            if state == "INTERVENTION":
+                # Red overlay
+                int_overlay = frame.copy()
+                cv2.rectangle(int_overlay, (0, 0), (width, height), (0, 0, 255), -1)
+                cv2.addWeighted(int_overlay, 0.5, frame, 0.5, 0, frame)
+                
+                # Big Text
+                int_text = "INTERVENTION SCREEN"
+                tx, ty = get_centered_coords(int_text, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 5, width, height)
+                cv2.putText(frame, int_text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 2.0, (255, 255, 255), 5)
+
             # Final Score Logic for Colors
             # Score is 0.0 - 1.0
             score_pct = final_score * 100

@@ -21,10 +21,10 @@ MIN_BASELINE_SAMPLES = 5
 
 # --- Distress State Machine Config ---
 DISTRESS_ENTER_THRESHOLD = 0.70
-DISTRESS_EXIT_THRESHOLD  = 0.50
+DISTRESS_EXIT_THRESHOLD  = 0.20
 
 ACCUM_REQUIRED_SECONDS   = 5.0
-EXIT_HOLD_SECONDS        = 5.0
+EXIT_HOLD_SECONDS        = 30.0 # exit hold time is longer than enter to show maintenance of positive state
 RESET_COOLDOWN_SECONDS   = 120.0 # 2 Minutes of "safety" required to reset the accumulator
 DT_MAX_SECONDS           = 1.0  # safety clamp 
 
@@ -185,7 +185,7 @@ def run_realtime_emotion():
                                 below_since = None
 
                         elif state == "INTERVENTION":
-                            if final_score <= DISTRESS_EXIT_THRESHOLD:
+                            if final_score <= DISTRESS_EXIT_THRESHOLD: # below 20% threshold
                                 if below_since is None:
                                     below_since = now
                                 elif (now - below_since) >= EXIT_HOLD_SECONDS:

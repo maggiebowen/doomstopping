@@ -7,13 +7,13 @@ NON_DISTRESS_EMOTIONS = ["neutral", "happy", "surprise"]
 
 # Weights: Reflect severity/arousal of distress
 EMOTION_WEIGHTS = {
-    # Distress
-    "sad": 1.25,
-    "angry": 1.25,
-    "fear": 1.4,     # Higher weight for high-arousal/urgency signals 
-    "disgust": 1.4,
+    # Distress, given higher weights
+    "sad": 1.5,
+    "angry": 1.5,
+    "fear": 1.5,
+    "disgust": 1.5,
     # Non-Distress
-    "neutral": 1.0,  # Standard anchor
+    "neutral": 1.0,
     "happy": 1.0,
     "surprise": 1.0
 }

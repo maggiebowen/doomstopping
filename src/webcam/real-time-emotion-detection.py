@@ -5,6 +5,8 @@ from collections import deque
 import logging
 import time
 import sys
+import webbrowser
+import os
 
 # Robust Scoring Logic
 import distress_score
@@ -16,7 +18,7 @@ logger = logging.getLogger("EmotionDetector")
 # Constants
 ANALYSIS_INTERVAL = 0.2  # Analyze emotion every 0.2 seconds (5 FPS)
 WINDOW_SIZE = 10         # Rolling window size (10 samples @ 0.2s = 2s history)
-CALIBRATION_SECONDS = 12.0
+CALIBRATION_SECONDS = 15.0
 MIN_BASELINE_SAMPLES = 5 
 
 # --- Distress State Machine Config ---
@@ -24,7 +26,6 @@ DISTRESS_ENTER_THRESHOLD = 0.70
 DISTRESS_EXIT_THRESHOLD  = 0.20
 
 ACCUM_REQUIRED_SECONDS   = 5.0
-EXIT_HOLD_SECONDS        = 30.0 # exit hold time is longer than enter to show maintenance of positive state
 RESET_COOLDOWN_SECONDS   = 120.0 # 2 Minutes of "safety" required to reset the accumulator
 DT_MAX_SECONDS           = 1.0  # safety clamp 
 
@@ -183,20 +184,22 @@ def run_realtime_emotion():
                                 state = "INTERVENTION"
                                 event = "ENTER_INTERVENTION"
                                 below_since = None
+                                
+                                # Launch Breathing Overlay
+                                try:
+                                    # Construct absolute path to the HTML file
+                                    overlay_path = os.path.abspath("../ui//breathing_exercise.html")
+                                    # Open in default browser (file:// protocol)
+                                    webbrowser.open(f"file://{overlay_path}")
+                                    logger.info(f"Launched intervention overlay: {overlay_path}")
+                                except Exception as e:
+                                    logger.error(f"Failed to launch overlay: {e}")
+
 
                         elif state == "INTERVENTION":
-                            if final_score <= DISTRESS_EXIT_THRESHOLD: # below 20% threshold
-                                if below_since is None:
-                                    below_since = now
-                                elif (now - below_since) >= EXIT_HOLD_SECONDS:
-                                    state = "VIEWING"
-                                    event = "EXIT_INTERVENTION"
-                                    accum_above = 0.0
-                                    below_since = None
-                            else:
-                                below_since = None
+                            # No Exit Logic - State persists until manual restart
+                            pass
                         
-                        # Step 5: Terminal Output
                         # Step 5: Terminal Output
                         # Combined for maximum visibility
                         print(

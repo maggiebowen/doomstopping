@@ -17,13 +17,13 @@ logger = logging.getLogger("EmotionDetector")
 
 # Constants
 ANALYSIS_INTERVAL = 0.2  # Analyze emotion every 0.2 seconds (5 FPS)
-WINDOW_SIZE = 10         # Rolling window size (10 samples @ 0.2s = 2s history)
+WINDOW_SIZE = 5         # Rolling window size (5 samples @ 0.2s = 1s history)
 CALIBRATION_SECONDS = 15.0
 MIN_BASELINE_SAMPLES = 5 
 
 # --- Distress State Machine Config ---
-DISTRESS_ENTER_THRESHOLD = 0.70
-DISTRESS_EXIT_THRESHOLD  = 0.20
+DISTRESS_ENTER_THRESHOLD = 0.60
+DISTRESS_EXIT_THRESHOLD  = 0.20 # kept for future versions, if elevated mood restored, reset distress score to 0
 
 ACCUM_REQUIRED_SECONDS   = 5.0
 RESET_COOLDOWN_SECONDS   = 120.0 # 2 Minutes of "safety" required to reset the accumulator

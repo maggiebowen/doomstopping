@@ -203,6 +203,18 @@
                 textElement.innerText = item.text;
                 textElement.classList.add('visible');
 
+                // Play bell sound on odd indices starting from 3 (Inhale prompts)
+                // Index 3: "Breathing in..." (Sound)
+                // Index 4: "Breathing out..." (No Sound)
+                // Index 5: "In..." (Sound)
+                if (currentIndex >= 3 && currentIndex % 2 !== 0) {
+                    const bell = document.getElementById('bellSound');
+                    if (bell) {
+                        bell.currentTime = 0;
+                        bell.play().catch(e => console.log("Audio play failed:", e));
+                    }
+                }
+
                 if (item.waitForClick) {
                     isWaitingForClick = true;
                     hintElement.classList.add('visible-hint'); // Show hint
@@ -231,6 +243,7 @@
         setTimeout(showNext, 1000);
 
     </script>
+    <audio id="bellSound" src="../../assets/bell-chime.mp3" preload="auto"></audio>
 </body>
 
 </html>

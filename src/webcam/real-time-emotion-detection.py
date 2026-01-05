@@ -4,9 +4,8 @@ from deepface import DeepFace
 from collections import deque
 import logging
 import time
-import sys
-import webbrowser
-import os
+from flask import Flask, jsonify
+from threading import Thread
 
 # Robust Scoring Logic
 import distress_score
@@ -29,6 +28,26 @@ ACCUM_REQUIRED_SECONDS   = 5.0
 RESET_COOLDOWN_SECONDS   = 120.0 # 2 Minutes of "safety" required to reset the accumulator
 DT_MAX_SECONDS           = 1.0  # safety clamp 
 
+STATE_PAYLOAD = {
+    "phase": "CALIBRATING",          # "CALIBRATING" | "RUNNING"
+    "state": "VIEWING",              # "VIEWING" | "INTERVENTION"
+    "event": None,                   # None | "ENTER_INTERVENTION" | "EXIT_INTERVENTION"
+    "final": 0.0,                    # 0..1
+    "accum": 0.0,                    # seconds
+    "threshold": DISTRESS_ENTER_THRESHOLD,
+    "required_seconds": ACCUM_REQUIRED_SECONDS,
+    "ts": 0.0
+}
+
+app = Flask(__name__)
+
+@app.get("/state")
+def get_state():
+    return jsonify(STATE_PAYLOAD)
+
+def start_state_server():
+    app.run(host="127.0.0.1", port=8765, debug=False, use_reloader=False) 
+
 def get_centered_coords(text, font, scale, thickness, img_width, img_height):
     text_size = cv2.getTextSize(text, font, scale, thickness)[0]
     text_x = (img_width - text_size[0]) // 2
@@ -46,6 +65,8 @@ def run_realtime_emotion():
         return
 
     logger.info("Webcam opened. Press 'q' to quit.")
+    Thread(target=start_state_server, daemon=True).start()
+    logger.info("State server running at http://127.0.0.1:8765/state")
 
     # Get frame dimensions for centering
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -65,7 +86,6 @@ def run_realtime_emotion():
     final_score = 0.0    # Baseline Corrected (0-1)
     current_dominant = "Neutral"
     current_emotions = {} # Store raw emotion dict
-    raw_sum = 0.0        # Current frame raw score
     raw_sum = 0.0        # Current frame raw score
     distress_z = 0.0     # Z-score for triggers
     baseline_std = 1.0   # Default to 1.0 to avoid divide-by-zero
@@ -141,6 +161,13 @@ def run_realtime_emotion():
                         last_update_time = None
                         last_distress_time = time.time()
                         
+                        STATE_PAYLOAD["phase"] = "CALIBRATING"
+                        STATE_PAYLOAD["state"] = "VIEWING"
+                        STATE_PAYLOAD["event"] = None
+                        STATE_PAYLOAD["final"] = 0.0
+                        STATE_PAYLOAD["accum"] = 0.0
+                        STATE_PAYLOAD["ts"] = float(time.time())
+                        
                     else:
                         # RUNNING PHASE
                         final_score = distress_score.apply_baseline_correction(smoothed_score, baseline_mean)
@@ -185,20 +212,19 @@ def run_realtime_emotion():
                                 event = "ENTER_INTERVENTION"
                                 below_since = None
                                 
-                                # Launch Breathing Overlay
-                                try:
-                                    # Construct absolute path to the HTML file
-                                    overlay_path = os.path.abspath("../ui//breathing_exercise.html")
-                                    # Open in default browser (file:// protocol)
-                                    webbrowser.open(f"file://{overlay_path}")
-                                    logger.info(f"Launched intervention overlay: {overlay_path}")
-                                except Exception as e:
-                                    logger.error(f"Failed to launch overlay: {e}")
+                                below_since = None
 
 
                         elif state == "INTERVENTION":
                             # No Exit Logic - State persists until manual restart
                             pass
+                        
+                        STATE_PAYLOAD["phase"] = "RUNNING"
+                        STATE_PAYLOAD["state"] = state
+                        STATE_PAYLOAD["event"] = event
+                        STATE_PAYLOAD["final"] = float(final_score)
+                        STATE_PAYLOAD["accum"] = float(accum_above)
+                        STATE_PAYLOAD["ts"] = float(now)
                         
                         # Step 5: Terminal Output
                         # Combined for maximum visibility

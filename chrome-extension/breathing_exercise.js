@@ -10,10 +10,11 @@ const sequence = [
     { text: "In…", duration: 5000 },
     { text: "Out…", duration: 5000 },
 
-    { text: "Breathing in, I become aware of my body.", duration: 5000 },
-    { text: "Breathing out, I release any tension.", duration: 5000 },
-    { text: "Aware of body…", duration: 5000 },
-    { text: "Releasing tension…", duration: 5000 },
+    // cut for demo time
+    // { text: "Breathing in, I become aware of my body.", duration: 5000 },
+    // { text: "Breathing out, I release any tension.", duration: 5000 },
+    // { text: "Aware of body…", duration: 5000 },
+    // { text: "Releasing tension…", duration: 5000 },
 
     { text: "Breathing in, I arrive in this present moment.", duration: 6000 },
     { text: "Breathing out, I feel at home in the here and now.", duration: 6000 },
@@ -23,7 +24,14 @@ const sequence = [
     { text: "Breathing in, I calm my mind.", duration: 6000 },
     { text: "Breathing out, I let go of all worries.", duration: 6000 },
     { text: "Calm…", duration: 5000 },
-    { text: "Letting go…", duration: 5000 }
+    { text: "Letting go…", duration: 5000 },
+
+    // Final redirection
+    {
+        text: "Instead of continuing to doomscroll, read about how you can consume media more mindfully, in a way that aligns with your values and reduces your physiological stress",
+        waitForClick: true,
+        isFinal: true
+    }
 ];
 
 let textElement;
@@ -33,9 +41,7 @@ let isWaitingForClick = false;
 
 function showNext() {
     if (currentIndex >= sequence.length) {
-        // End of sequence. Fade out text.
-        if (textElement) textElement.classList.remove('visible');
-        if (hintElement) hintElement.classList.remove('visible-hint');
+        // This shouldn't be reached if logic works right, but just in case
         return;
     }
 
@@ -49,14 +55,9 @@ function showNext() {
     setTimeout(() => {
         if (!textElement) return;
 
-        textElement.innerText = item.text;
-        textElement.classList.add('visible');
-
-        // Play bell sound on odd indices starting from 3 (Inhale prompts)
-        // Index 3: "Breathing in..." (Sound)
-        // Index 4: "Breathing out..." (No Sound)
-        // Index 5: "In..." (Sound)
-        if (currentIndex >= 3 && currentIndex % 2 !== 0) {
+        // Play bell sound IMMEDIATELY (odd indices >= 3, but not the final one if we don't want it)
+        // Checks: index 3, 5, 7, ... and NOT final
+        if (currentIndex >= 3 && currentIndex % 2 !== 0 && !item.isFinal) {
             const bell = document.getElementById('bellSound');
             if (bell) {
                 bell.currentTime = 0;
@@ -64,10 +65,15 @@ function showNext() {
             }
         }
 
+        textElement.innerText = item.text;
+        textElement.classList.add('visible');
+
         if (item.waitForClick) {
             isWaitingForClick = true;
-            if (hintElement) hintElement.classList.add('visible-hint'); // Show hint
-            // Logic handles click listener below
+            if (hintElement) {
+                hintElement.innerText = item.isFinal ? "(Click to exit to mindful consumption)" : "(Click to continue)";
+                hintElement.classList.add('visible-hint');
+            }
         } else {
             isWaitingForClick = false;
             // Schedule next auto
@@ -85,6 +91,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Click Logic
     document.body.addEventListener('click', () => {
         if (isWaitingForClick) {
+            const item = sequence[currentIndex];
+            if (item && item.isFinal) {
+                // Redirect logic
+                window.location.href = "https://plumvillage.app/the-practice-of-mindful-consumption/";
+                return;
+            }
+
             // User clicked, proceed
             isWaitingForClick = false;
             currentIndex++;

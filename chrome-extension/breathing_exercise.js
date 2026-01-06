@@ -68,6 +68,13 @@ function showNext() {
         textElement.innerText = item.text;
         textElement.classList.add('visible');
 
+        // Apply special styling for final long text
+        if (item.isFinal) {
+            textElement.classList.add('final-text');
+        } else {
+            textElement.classList.remove('final-text');
+        }
+
         if (item.waitForClick) {
             isWaitingForClick = true;
             if (hintElement) {

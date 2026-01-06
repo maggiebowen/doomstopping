@@ -208,6 +208,7 @@ def run_realtime_emotion():
                                     # print(f"COOLDOWN REACHED ({RESET_COOLDOWN_SECONDS}s) - Accumulator Reset")
 
                             if accum_above >= ACCUM_REQUIRED_SECONDS:
+                                accum_above = ACCUM_REQUIRED_SECONDS # Clamp for display/logic
                                 state = "INTERVENTION"
                                 event = "ENTER_INTERVENTION"
                                 below_since = None

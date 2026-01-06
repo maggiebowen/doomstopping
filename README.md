@@ -59,13 +59,15 @@ To enable the breathing intervention on YouTube:
 Start the real-time emotion detection script:
 
 ```bash
-python src/webcam/real-time-emotion-detection.py
+python3 src/webcam/real-time-emotion-detection.py
 ```
 
 This script will:
 1. Open your webcam.
 2. Analyze your facial expressions in real-time.
 3. Start a local server at `http://127.0.0.1:8765/state` to communicate with the Chrome extension.
+
+> **Note:** To stop the script and close the webcam, click on the webcam window to focus it and press **`q`**.
 
 ### Adjusting Thresholds
 

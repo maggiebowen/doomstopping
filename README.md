@@ -69,6 +69,42 @@ This script will:
 
 > **Note:** To stop the script and close the webcam, click on the webcam window to focus it and press **`q`**.
 
+### Customizing the Target Website
+
+By default, the extension injects the breathing overlay on **YouTube** (`https://www.youtube.com/*`). To use it on a different website (e.g., Twitter, Reddit, or any other site), you need to modify the `chrome-extension/manifest.json` file:
+
+1. Open `chrome-extension/manifest.json`
+2. Update **both** the `content_scripts` section and the `web_accessible_resources` section:
+
+```json
+"content_scripts": [
+  {
+    "matches": [
+      "https://www.example.com/*"  // Replace with your target website
+    ],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }
+],
+"web_accessible_resources": [
+  {
+    "resources": [
+      "breathing_exercise.html",
+      "breathing_exercise.js",
+      "assets/*"
+    ],
+    "matches": [
+      "https://www.example.com/*"  // Must match the content_scripts pattern
+    ]
+  }
+]
+```
+
+3. Replace `https://www.example.com/*` with the URL pattern of the site you want to target (e.g., `https://twitter.com/*` or `https://*.reddit.com/*`)
+4. Reload the extension in Chrome at `chrome://extensions/`
+
+> **Tip:** You can add multiple URL patterns by listing them in the `matches` array, separated by commas.
+
 ### Adjusting Thresholds
 
 You can customize the sensitivity of the intervention in `src/webcam/real-time-emotion-detection.py`:

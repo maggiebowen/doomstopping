@@ -1,6 +1,6 @@
 # Doomstopping
 
-A stress detection and intervention system combining physiological signals (WESAD dataset) and real-time facial emotion analysis.
+A stress detection and intervention system combining physiological signals (WESAD dataset) and real-time facial emotion analysis. Completed for the 2025-2026 Advanced HCI course at the Università di Trento.
 
 ## Features
 
